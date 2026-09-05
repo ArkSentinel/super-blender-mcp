@@ -28,9 +28,9 @@ dev = ["pytest>=8.0", "ruff>=0.9"]
 super-mcp = "server.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/TU_USUARIO/super-mcp"
-Repository = "https://github.com/TU_USUARIO/super-mcp"
-Issues = "https://github.com/TU_USUARIO/super-mcp/issues"
+Homepage = "https://github.com/ArkSentinel/super-blender-mcp"
+Repository = "https://github.com/ArkSentinel/super-blender-mcp"
+Issues = "https://github.com/ArkSentinel/super-blender-mcp/issues"
 
 [build-system]
 requires = ["hatchling"]

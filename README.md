@@ -83,10 +83,10 @@ super-mcp/
 #### Opcion A: Instalacion directa desde GitHub
 
 ```bash
-pip install git+https://github.com/TU_USUARIO/super-mcp.git
+pip install git+https://github.com/ArkSentinel/super-blender-mcp.git
 super-mcp --transport stdio
 # con uv
-uv tool install git+https://github.com/TU_USUARIO/super-mcp.git
+uv tool install git+https://github.com/ArkSentinel/super-blender-mcp.git
 ```
 
 Sustituir `TU_USUARIO` por el propietario del repositorio. Esta variante no requiere clonacion previa y registra el binario `super-mcp` en el PATH.
@@ -94,7 +94,7 @@ Sustituir `TU_USUARIO` por el propietario del repositorio. Esta variante no requ
 #### Opcion B: Clonacion e instalacion editable para desarrollo
 
 ```bash
-git clone https://github.com/TU_USUARIO/super-mcp.git
+git clone https://github.com/ArkSentinel/super-blender-mcp.git
 cd super-mcp
 pip install -e .
 super-mcp --transport stdio
