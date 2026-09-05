@@ -1,0 +1,15 @@
+initial_instructions: |
+  SuperMCP for Blender — Advanced mesh curing + PBR texturing + Godot 4.x pipeline.
+  Runs on port 9877 (Free blender-mcp stays on 9876 — separate servers, no collision).
+
+  CURING PIPELINE (auto on godot_export_glb, or explicit via cure_model/cure_scene):
+    1. Apply Transforms — bakes location/rotation/scale into mesh (scale→1,1,1) via bpy.ops.object.transform_apply
+    2. Merge by Distance — bmesh.ops.remove_doubles dist=0.0001 removes duplicate verts
+    3. Recalc Normals — bmesh.ops.recalc_face_normals outside, fixes inverted faces
+
+  GODOT EXPORT:
+    - Format .glb (glTF 2.0) native Godot 4.x — 1 Blender unit = 1 meter = 1 Godot unit
+    - Use godot_validate_scene before export to see errors/warnings
+    - godot_export_glb auto-cures by default (set auto_cure=false to skip)
+
+  Use execute_blender_code for custom bpy/bmesh when no dedicated tool exists.

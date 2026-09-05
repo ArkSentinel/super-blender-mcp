@@ -1,0 +1,44 @@
+[project]
+name = "super-mcp"
+version = "0.1.0"
+description = "SuperMCP para Blender - Mallas complejas, PBR y pipeline Godot. Servidor MCP en puerto 9877 separado del Free 9876."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "SuperMCP" }]
+keywords = ["blender", "mcp", "godot", "bpy", "bmesh", "gltf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "mcp>=1.29.0,<2",
+    "httpx>=0.28",
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+super-mcp = "server.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/TU_USUARIO/super-mcp"
+Repository = "https://github.com/TU_USUARIO/super-mcp"
+Issues = "https://github.com/TU_USUARIO/super-mcp/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server", "data"]
+
+[tool.ruff]
+line-length = 100
+
+[dependency-groups]
+dev = ["pytest>=8.0", "ruff>=0.9"]

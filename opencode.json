@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "super-mcp": {
+      "type": "local",
+      "command": ["super-mcp"],
+      "enabled": true
+    }
+  }
+}
