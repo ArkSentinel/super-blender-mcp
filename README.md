@@ -53,7 +53,10 @@ El sistema cubre el Free corregido y 11 categorias ausentes en el Free. El total
 
 ```
 super-mcp/
-  addon.py                 Addon de Blender. Servidor en puerto 9877.
+  addon.py                 Fuente del addon (desarrollo).
+  super_mcp/__init__.py    Modulo instalable en Blender (generado desde addon.py).
+  super_mcp.zip            Paquete instalable via Preferences > Add-ons > Install.
+  addon.py                 (no instalar directo, usar super_mcp.zip).
   server/
     __main__.py            Servidor FastMCP. Transporte stdio y http.
     tools/                 18 modulos, 107 herramientas con registro automatico.
@@ -74,8 +77,8 @@ super-mcp/
 
 1. Abrir Blender.
 2. Seleccionar Edit, Preferences, Add-ons, Install.
-3. Seleccionar el archivo `addon.py` del repositorio.
-4. Activar Interface: SuperMCP.
+3. Seleccionar el archivo `super_mcp.zip` del repositorio (contiene `super_mcp/__init__.py`). No instalar `addon.py` suelto, ya que Blender lo registra como modulo generico `addon`.
+4. Activar Interface: SuperMCP (buscar `SuperMCP` con el filtro de Add-ons).
 5. En la vista 3D, abrir el panel lateral con N, seleccionar la pestana SuperMCP y accionar Start Server. El servidor queda en escucha en 9877. El Free permanece en 9876.
 
 ### Instalacion del servidor MCP
