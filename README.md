@@ -302,6 +302,43 @@ Sin instalacion, utilizar el formato con `PYTHONPATH` descrito para Claude Code.
 
 Editar `~/.codeium/windsurf/mcp_config.json` con el mismo formato que Cursor.
 
+### Antigravity (Gemini)
+
+Antigravity utiliza `~/.gemini/config/mcp_config.json` (compartido con Gemini CLI). Agregar en `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "super-mcp": {
+      "command": "super-mcp",
+      "args": [],
+      "env": {
+        "SUPER_MCP_HOST": "localhost",
+        "SUPER_MCP_PORT": "9877"
+      }
+    }
+  }
+}
+```
+
+Sin instalacion via pip, utilizar:
+
+```json
+{
+  "mcpServers": {
+    "super-mcp": {
+      "command": "/usr/bin/python3",
+      "args": ["-m", "server.__main__"],
+      "env": {
+        "PYTHONPATH": "/ruta/a/super-mcp"
+      }
+    }
+  }
+}
+```
+
+Reiniciar Antigravity tras guardar. Coexiste con el Free `blender` en puerto 9876 sin conflicto.
+
 ### Cline y harnesses genericos
 
 Con paquete instalado, cualquier harness compatible con MCP en transporte stdio utiliza:
