@@ -527,6 +527,8 @@ class SuperMCPServer:
             "shader_export_as_code": self.shader_export_as_code,
             "asset_create_pitched_roof": self.asset_create_pitched_roof,
             "asset_create_wall": self.asset_create_wall,
+            "asset_cut_wall_opening": self.asset_cut_wall_opening,
+            "asset_add_window": self.asset_add_window,
             "uv_unwrap": self.uv_unwrap,
             "uv_add_layer": self.uv_add_layer,
             "uv_pack_islands": self.uv_pack_islands,
@@ -2938,6 +2940,114 @@ class SuperMCPServer:
             "thickness": thickness,
             "success": True,
         }
+
+    def asset_cut_wall_opening(self, wall_name="", center=(0,0,1.5), size=(1.0, 0.6, 1.0), cutout_name="Cutout"):
+        """Corta un hueco perfecto en una pared mediante un cortador booleano sin destruir el objeto ni la escena."""
+        wall_obj = bpy.data.objects.get(wall_name)
+        if not wall_obj or wall_obj.type != 'MESH':
+            raise ValueError(f"Wall object not found: {wall_name}")
+
+        cx, cy, cz = center
+        sx, sy, sz = size
+        min_p = (cx - sx/2.0, cy - sy/2.0, cz - sz/2.0)
+        max_p = (cx + sx/2.0, cy + sy/2.0, cz + sz/2.0)
+
+        cutter_mesh = bpy.data.meshes.new(f"Cutter_{cutout_name}")
+        cutter = bpy.data.objects.new(f"Cutter_{cutout_name}", cutter_mesh)
+        bpy.context.collection.objects.link(cutter)
+
+        bm = bmesh.new()
+        x0, y0, z0 = min_p
+        x1, y1, z1 = max_p
+        v000 = bm.verts.new((x0, y0, z0))
+        v100 = bm.verts.new((x1, y0, z0))
+        v110 = bm.verts.new((x1, y1, z0))
+        v010 = bm.verts.new((x0, y1, z0))
+        v001 = bm.verts.new((x0, y0, z1))
+        v101 = bm.verts.new((x1, y0, z1))
+        v111 = bm.verts.new((x1, y1, z1))
+        v011 = bm.verts.new((x0, y1, z1))
+        bm.faces.new((v000, v100, v110, v010))
+        bm.faces.new((v001, v011, v111, v101))
+        bm.faces.new((v000, v001, v101, v100))
+        bm.faces.new((v100, v101, v111, v110))
+        bm.faces.new((v110, v111, v011, v010))
+        bm.faces.new((v010, v011, v001, v000))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(cutter_mesh)
+        bm.free()
+
+        cutter.hide_viewport = True
+        cutter.hide_render = True
+
+        mod = wall_obj.modifiers.new(name=cutout_name, type='BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cutter
+
+        return {
+            "wall": wall_obj.name,
+            "cutout_name": cutout_name,
+            "center": list(center),
+            "size": list(size),
+            "success": True,
+        }
+
+    def asset_add_window(self, wall_name="", center=(0,0,1.5), size=(1.0, 0.4, 1.0), frame_material="", glass_material=""):
+        """Corta un hueco en la pared especificada y encaja una ventana (marco + cristal) sin solapamiento."""
+        res_cut = self.asset_cut_wall_opening(wall_name=wall_name, center=center, size=size, cutout_name=f"CutWin_{center[0]}_{center[1]}")
+        
+        cx, cy, cz = center
+        sx, sy, sz = size
+        f_thick = 0.08
+
+        f_min = (cx - sx/2.0, cy - sy/2.0, cz - sz/2.0)
+        f_max = (cx + sx/2.0, cy + sy/2.0, cz + sz/2.0)
+
+        mat_f = bpy.data.materials.get(frame_material) if frame_material else None
+        mat_g = bpy.data.materials.get(glass_material) if glass_material else None
+
+        win_frame = self._add_box_mesh(f"WinFrame_{cx}_{cy}", f_min, f_max, mat_f)
+        
+        g_min = (cx - (sx/2.0 - f_thick), cy - 0.02, cz - (sz/2.0 - f_thick))
+        g_max = (cx + (sx/2.0 - f_thick), cy + 0.02, cz + (sz/2.0 - f_thick))
+        win_glass = self._add_box_mesh(f"WinGlass_{cx}_{cy}", g_min, g_max, mat_g)
+
+        return {
+            "wall": wall_name,
+            "window_frame": win_frame.name,
+            "window_glass": win_glass.name,
+            "center": list(center),
+            "size": list(size),
+            "success": True,
+        }
+
+    def _add_box_mesh(self, name, min_pt, max_pt, mat=None):
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+        bm = bmesh.new()
+        x0, y0, z0 = min_pt
+        x1, y1, z1 = max_pt
+        v000 = bm.verts.new((x0, y0, z0))
+        v100 = bm.verts.new((x1, y0, z0))
+        v110 = bm.verts.new((x1, y1, z0))
+        v010 = bm.verts.new((x0, y1, z0))
+        v001 = bm.verts.new((x0, y0, z1))
+        v101 = bm.verts.new((x1, y0, z1))
+        v111 = bm.verts.new((x1, y1, z1))
+        v011 = bm.verts.new((x0, y1, z1))
+        bm.faces.new((v000, v100, v110, v010))
+        bm.faces.new((v001, v011, v111, v101))
+        bm.faces.new((v000, v001, v101, v100))
+        bm.faces.new((v100, v101, v111, v110))
+        bm.faces.new((v110, v111, v011, v010))
+        bm.faces.new((v010, v011, v001, v000))
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+        if mat:
+            obj.data.materials.append(mat)
+        return obj
 
 # ── Blender Addon registration ──────────────────────────────────────────
 

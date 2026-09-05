@@ -130,6 +130,16 @@ class TestSuperMCP(unittest.TestCase):
         pack_res = self.server.uv_pack_islands(object_name=obj.name, margin=0.02)
         self.assertTrue(pack_res["packed"])
 
+    def test_asset_window_and_cutout(self):
+        """Test 7: asset_add_window cuts wall opening and inserts window frame & glass."""
+        wall_res = self.server.asset_create_wall(name="TestWall", start=(0,0,0), end=(4,0,0), height=2.5, thickness=0.2)
+        self.assertTrue(wall_res["success"])
+
+        win_res = self.server.asset_add_window(wall_name="TestWall", center=(2.0, 0, 1.2), size=(1.0, 0.4, 1.0))
+        self.assertTrue(win_res["success"])
+        self.assertIsNotNone(bpy.data.objects.get(win_res["window_frame"]))
+        self.assertIsNotNone(bpy.data.objects.get(win_res["window_glass"]))
+
 
 if __name__ == "__main__":
     suite = unittest.TestLoader().loadTestsFromTestCase(TestSuperMCP)

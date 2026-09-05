@@ -38,10 +38,18 @@ def register(mcp: FastMCP)->None:
             "overhang": overhang, "thickness": thickness, "base_height": base_height, "material_name": material_name
         }}))
 
-    @mcp.tool(annotations=ToolAnnotations(title="Create Wall (Snapped Asset)"))
-    def asset_create_wall(name: str = "Wall", start: list = [0,0,0], end: list = [5,0,0], height: float = 2.5, thickness: float = 0.2, material_name: str = "") -> dict:
-        """Crea una pared recta perfectamente alineada desde start hasta end."""
-        return _u(send_to_supermcp({"type":"asset_create_wall","params":{
-            "name": name, "start": start, "end": end, "height": height, "thickness": thickness, "material_name": material_name
+    @mcp.tool(annotations=ToolAnnotations(title="Cut Wall Opening (Non-destructive)"))
+    def asset_cut_wall_opening(wall_name: str = "", center: list = [0,0,1.5], size: list = [1.0, 0.6, 1.0], cutout_name: str = "Cutout") -> dict:
+        """Corta un hueco perfecto en una pared existente sin destruir el objeto ni solapar geometrías."""
+        return _u(send_to_supermcp({"type":"asset_cut_wall_opening","params":{
+            "wall_name": wall_name, "center": center, "size": size, "cutout_name": cutout_name
         }}))
+
+    @mcp.tool(annotations=ToolAnnotations(title="Add Window (Cutout + Fitted Frame)"))
+    def asset_add_window(wall_name: str = "", center: list = [0,0,1.5], size: list = [1.0, 0.4, 1.0], frame_material: str = "", glass_material: str = "") -> dict:
+        """Corta un hueco en la pared especificada y encaja el marco y cristal de la ventana sin solapamientos ni z-fighting."""
+        return _u(send_to_supermcp({"type":"asset_add_window","params":{
+            "wall_name": wall_name, "center": center, "size": size, "frame_material": frame_material, "glass_material": glass_material
+        }}))
+
 
