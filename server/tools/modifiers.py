@@ -6,10 +6,7 @@ from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
 
-def _unwrap(resp: dict) -> dict:
-    if resp.get("status") in ("success", "ok"):
-        return resp.get("result", resp)
-    return resp
+from server.tools_helpers import unwrap_response as _unwrap
 
 
 def register(mcp: FastMCP) -> None:

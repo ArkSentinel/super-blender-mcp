@@ -4,7 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _u(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _u
 
 def register(mcp: FastMCP)->None:
     @mcp.tool(annotations=ToolAnnotations(title="Reset Scene Clean", destructiveHint=True))

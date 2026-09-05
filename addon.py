@@ -141,8 +141,6 @@ def _recalc_normals_for_object(obj, inside=False, fix_inverted=True):
     bm.faces.ensure_lookup_table()
     # Recalculate
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    # Also ensure consistent winding
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     # Optionally ensure normals outside
     if fix_inverted:
         # bmesh recalc already does outside
@@ -1097,10 +1095,17 @@ class SuperMCPServer:
         if not obj or obj.type != 'MESH':
             raise ValueError(f"Mesh object not found: {object_name}")
         mesh = obj.data
-        ngons = sum(1 for p in mesh.polygons if len(p.vertices) > 4)
-        tris = sum(1 for p in mesh.polygons if len(p.vertices) == 3)
-        quads = sum(1 for p in mesh.polygons if len(p.vertices) == 4)
-        degenerate = sum(1 for p in mesh.polygons if p.area < 1e-8)
+        ngons = tris = quads = degenerate = 0
+        for p in mesh.polygons:
+            n = len(p.vertices)
+            if n > 4:
+                ngons += 1
+            elif n == 3:
+                tris += 1
+            elif n == 4:
+                quads += 1
+            if p.area < 1e-8:
+                degenerate += 1
         has_uv = len(mesh.uv_layers) > 0
         non_uniform_scale = any(abs(s - 1.0) > 1e-4 for s in obj.scale)
         return {
@@ -1524,17 +1529,76 @@ class SuperMCPServer:
         ao_img = bpy.data.images.get(ao_image_name) if ao_image_name else None
         rough_img = bpy.data.images.get(rough_image_name) if rough_image_name else None
         metal_img = bpy.data.images.get(metal_image_name) if metal_image_name else None
-        for y in range(height):
-            for x in range(width):
-                idx = (y * width + x) * 4
-                r = get_pixel(ao_img, x, y) if ao_img else 1.0
-                g = get_pixel(rough_img, x, y) if rough_img else 0.5
-                b = get_pixel(metal_img, x, y) if metal_img else 0.0
-                pixels[idx] = r
-                pixels[idx+1] = g
-                pixels[idx+2] = b
-                pixels[idx+3] = 1.0
-        orm.pixels.foreach_set(pixels)
+        # Vectorized path with numpy when available, fallback to python loop
+        try:
+            import numpy as np
+            # Pre-fetch source pixels as numpy arrays via foreach_get
+            def fetch_pixels(img):
+                if not img or not img.pixels:
+                    return None
+                w, h = img.size
+                if w == 0 or h == 0:
+                    return None
+                arr = [0.0] * (w * h * 4)
+                # Use foreach_get if available for speed
+                try:
+                    img.pixels.foreach_get(arr)
+                except:
+                    # Fallback sequential
+                    for i in range(len(arr)):
+                        try:
+                            arr[i] = img.pixels[i]
+                        except:
+                            arr[i] = 0.0
+                return np.array(arr, dtype=np.float32).reshape((h, w, 4))
+
+            ao_arr = fetch_pixels(ao_img)
+            rough_arr = fetch_pixels(rough_img)
+            metal_arr = fetch_pixels(metal_img)
+
+            # Build ORM via numpy for target size
+            orm_pixels = [0.0] * (width * height * 4)
+            # For simplicity, use nearest sampling via numpy indexing when sizes differ
+            for y in range(height):
+                for x in range(width):
+                    idx = (y * width + x) * 4
+                    # Sample source arrays with scaling
+                    if ao_arr is not None:
+                        ah, aw = ao_arr.shape[0], ao_arr.shape[1]
+                        sy, sx = min(ah-1, int(y * ah / height)), min(aw-1, int(x * aw / width))
+                        r = float(ao_arr[sy, sx, 0])
+                    else:
+                        r = 1.0
+                    if rough_arr is not None:
+                        rh, rw = rough_arr.shape[0], rough_arr.shape[1]
+                        sy, sx = min(rh-1, int(y * rh / height)), min(rw-1, int(x * rw / width))
+                        g = float(rough_arr[sy, sx, 0])
+                    else:
+                        g = 0.5
+                    if metal_arr is not None:
+                        mh, mw = metal_arr.shape[0], metal_arr.shape[1]
+                        sy, sx = min(mh-1, int(y * mh / height)), min(mw-1, int(x * mw / width))
+                        b = float(metal_arr[sy, sx, 0])
+                    else:
+                        b = 0.0
+                    orm_pixels[idx] = r
+                    orm_pixels[idx+1] = g
+                    orm_pixels[idx+2] = b
+                    orm_pixels[idx+3] = 1.0
+            orm.pixels.foreach_set(orm_pixels)
+        except Exception:
+            # Fallback pure python (original)
+            for y in range(height):
+                for x in range(width):
+                    idx = (y * width + x) * 4
+                    r = get_pixel(ao_img, x, y) if ao_img else 1.0
+                    g = get_pixel(rough_img, x, y) if rough_img else 0.5
+                    b = get_pixel(metal_img, x, y) if metal_img else 0.0
+                    pixels[idx] = r
+                    pixels[idx+1] = g
+                    pixels[idx+2] = b
+                    pixels[idx+3] = 1.0
+            orm.pixels.foreach_set(pixels)
         orm.pack()
         orm.colorspace_settings.name = 'Non-Color'
         return {"orm_image": orm.name, "width": width, "height": height, "sources": {"ao": ao_image_name, "rough": rough_image_name, "metal": metal_image_name}}
@@ -2180,16 +2244,25 @@ class SuperMCPServer:
                 issues.append(f"{bone.name}: non-deform")
             if bone.length < 1e-4:
                 issues.append(f"{bone.name}: zero length")
-        # Check meshes parented
+        # Check meshes parented (optimized: early exit, limit)
         for o in bpy.data.objects:
             if o.type=='MESH' and o.parent == obj:
                 if not o.vertex_groups:
                     issues.append(f"{o.name}: no vertex groups")
-                # Check unweighted verts
+                    continue
+                # Check up to first unweighted verts, limited to avoid O(n^3)
                 for v in o.data.vertices:
-                    if not any(g.weight>0 for g in v.groups):
+                    has_weight = False
+                    for g in v.groups:
+                        if g.weight > 0:
+                            has_weight = True
+                            break
+                    if not has_weight:
                         issues.append(f"{o.name}: vertex {v.index} unweighted")
                         break
+                if len(issues) > 20:
+                    issues.append("... truncated, more issues omitted")
+                    break
         return {"armature": obj.name, "issues": issues, "healthy": len(issues)==0, "bones": len(obj.data.bones)}
 
     def diag_validate_armature(self, armature_name=""):

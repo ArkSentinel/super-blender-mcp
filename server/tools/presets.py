@@ -4,7 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _u(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _u
 
 def register(mcp: FastMCP)->None:
     @mcp.tool(annotations=ToolAnnotations(title="Apply Preset"))
@@ -31,7 +31,9 @@ def register(mcp: FastMCP)->None:
         return _u(send_to_supermcp({"type":"godot_setup_collision","params":{"object_name":object_name,"collision_type":collision_type}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Godot Setup LOD"))
-    def godot_setup_lod(object_name: str, levels: list = [0.5,0.25]) -> dict:
+    def godot_setup_lod(object_name: str, levels: list | None = None) -> dict:
+        if levels is None:
+            levels = [0.5,0.25]
         return _u(send_to_supermcp({"type":"godot_setup_lod","params":{"object_name":object_name,"levels":levels}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Godot Material Compatibility", readOnlyHint=True))

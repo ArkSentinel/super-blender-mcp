@@ -4,19 +4,27 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _u(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _u
 
 def register(mcp: FastMCP)->None:
     @mcp.tool(annotations=ToolAnnotations(title="Create Armature"))
-    def rig_create_armature(name: str = "Armature", location: list = [0,0,0]) -> dict:
+    def rig_create_armature(name: str = "Armature", location: list | None = None) -> dict:
+        if location is None:
+            location = [0,0,0]
         return _u(send_to_supermcp({"type":"rig_create_armature","params":{"name":name,"location":location}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Add Bone"))
-    def rig_add_bone(armature_name: str, bone_name: str = "Bone", head: list = [0,0,0], tail: list = [0,1,0], parent: str = "") -> dict:
+    def rig_add_bone(armature_name: str, bone_name: str = "Bone", head: list | None = None, tail: list | None = None, parent: str = "") -> dict:
+        if head is None:
+            head = [0,0,0]
+        if tail is None:
+            tail = [0,1,0]
         return _u(send_to_supermcp({"type":"rig_add_bone","params":{"armature_name":armature_name,"bone_name":bone_name,"head":head,"tail":tail,"parent":parent}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Set Bone Params"))
-    def rig_set_bone_params(armature_name: str, bone_name: str, params: dict = {}) -> dict:
+    def rig_set_bone_params(armature_name: str, bone_name: str, params: dict | None = None) -> dict:
+        if params is None:
+            params = {}
         return _u(send_to_supermcp({"type":"rig_set_bone_params","params":{"armature_name":armature_name,"bone_name":bone_name,"params":params}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Parent to Armature"))

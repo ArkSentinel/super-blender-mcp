@@ -4,12 +4,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _unwrap(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _unwrap
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ToolAnnotations(title="Create PBR Material"))
-    def pbr_create_material(material_name: str, base_color: list = [0.8,0.8,0.8,1.0], metallic: float = 0.0, roughness: float = 0.5) -> dict:
+    def pbr_create_material(material_name: str, base_color: list | None = None, metallic: float = 0.0, roughness: float = 0.5) -> dict:
         """Create or update Principled BSDF material."""
+        if base_color is None:
+            base_color = [0.8,0.8,0.8,1.0]
         return _unwrap(send_to_supermcp({"type":"pbr_create_material","params":{"material_name":material_name,"base_color":base_color,"metallic":metallic,"roughness":roughness}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Assign Material to Object"))

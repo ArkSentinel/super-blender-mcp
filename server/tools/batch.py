@@ -4,7 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _u(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _u
 
 def register(mcp: FastMCP)->None:
     @mcp.tool(annotations=ToolAnnotations(title="Batch Execute on Objects"))
@@ -13,7 +13,9 @@ def register(mcp: FastMCP)->None:
         return _u(send_to_supermcp({"type":"batch_execute_on_objects","params":{"code":code,"only_selected":only_selected}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Batch Render Queue"))
-    def batch_render_queue(filepaths: list = []) -> dict:
+    def batch_render_queue(filepaths: list | None = None) -> dict:
+        if filepaths is None:
+            filepaths = []
         return _u(send_to_supermcp({"type":"batch_render_queue","params":{"filepaths":filepaths}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Batch Import"))
@@ -28,5 +30,5 @@ def register(mcp: FastMCP)->None:
 
     @mcp.tool(annotations=ToolAnnotations(title="Batch Process Directory"))
     def batch_process_directory(directory: str, script_code: str = "") -> dict:
-        """Process all .blend files in directory with script_code (uses execute_blender_code_for_cli)."""
-        return _u(send_to_supermcp({"type":"batch_execute_on_objects","params":{"code":script_code,"only_selected":False}}))
+        """Process all .blend files in directory with script_code."""
+        return _u(send_to_supermcp({"type":"batch_process_directory","params":{"directory":directory,"script_code":script_code}}))

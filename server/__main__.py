@@ -5,8 +5,16 @@ import importlib
 import os
 import pkgutil
 
-import yaml
-from mcp.server.fastmcp import FastMCP
+import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
+else:
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except ImportError:
+        FastMCP = None  # type: ignore
 
 _USE_HTTP = True
 _TRANSPORTS = ("stdio", *(("http",) if _USE_HTTP else ()))
@@ -31,8 +39,8 @@ def main() -> int:
                 p = _yaml.safe_load(fh)
                 if p and isinstance(p, dict) and "initial_instructions" in p:
                     instructions = str(p["initial_instructions"])
-        except:
-            pass
+        except Exception as e:
+            print(f"SuperMCP: prompts.yml load failed: {e}", file=sys.stderr)
 
     mcp = FastMCP("super-mcp", instructions=instructions)
 
@@ -48,7 +56,7 @@ def main() -> int:
             if hasattr(mod, "register"):
                 mod.register(mcp)
         except Exception as e:
-            print(f"SuperMCP: failed to load tool {modname}: {e}")
+            print(f"SuperMCP: failed to load tool {modname}: {e}", file=sys.stderr)
 
     # Also load subpackages (e.g. tools/cure)
     for sub in os.listdir(tools_pkg.__path__[0]):
@@ -62,7 +70,7 @@ def main() -> int:
                     if hasattr(mod, "register"):
                         mod.register(mcp)
                 except Exception as e:
-                    print(f"SuperMCP: failed to load tool {sub}.{modname}: {e}")
+                    print(f"SuperMCP: failed to load tool {sub}.{modname}: {e}", file=sys.stderr)
 
     transport = args.transport
     if _USE_HTTP and transport == "http":

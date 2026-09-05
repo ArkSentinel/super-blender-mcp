@@ -4,7 +4,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _u(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _u
 
 def register(mcp: FastMCP)->None:
     @mcp.tool(annotations=ToolAnnotations(title="Import File (9 formats)"))
@@ -23,4 +23,4 @@ def register(mcp: FastMCP)->None:
 
     @mcp.tool(annotations=ToolAnnotations(title="Get Import Options", readOnlyHint=True))
     def io_get_import_options(format: str = "FBX") -> dict:
-        return _u(send_to_supermcp({"type":"io_list_formats","params":{}}))
+        return _u(send_to_supermcp({"type":"io_get_import_options","params":{"format":format}}))

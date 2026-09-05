@@ -4,16 +4,22 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from server.tools_helpers.connection import send_to_supermcp
 
-def _u(r): return r.get("result",r) if r.get("status") in ("success","ok") else r
+from server.tools_helpers import unwrap_response as _u
 
 def register(mcp: FastMCP)->None:
     @mcp.tool(annotations=ToolAnnotations(title="Create Light"))
-    def light_create(light_type: str = "POINT", name: str = "Light", location: list = [0,0,3], energy: float = 1000, color: list = [1,1,1]) -> dict:
+    def light_create(light_type: str = "POINT", name: str = "Light", location: list | None = None, energy: float = 1000, color: list | None = None) -> dict:
         """light_type: POINT, SUN, SPOT, AREA."""
+        if location is None:
+            location = [0,0,3]
+        if color is None:
+            color = [1,1,1]
         return _u(send_to_supermcp({"type":"light_create","params":{"light_type":light_type,"name":name,"location":location,"energy":energy,"color":color}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Set Light Params"))
-    def light_set_params(light_name: str, params: dict = {}) -> dict:
+    def light_set_params(light_name: str, params: dict | None = None) -> dict:
+        if params is None:
+            params = {}
         return _u(send_to_supermcp({"type":"light_set_params","params":{"light_name":light_name,"params":params}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Set World HDRI"))
@@ -29,12 +35,18 @@ def register(mcp: FastMCP)->None:
         return _u(send_to_supermcp({"type":"light_list","params":{}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Create Camera"))
-    def camera_create(name: str = "Camera", location: list = [7,-7,5], rotation_euler: list = [0.9,0,0.8], lens: float = 50) -> dict:
+    def camera_create(name: str = "Camera", location: list | None = None, rotation_euler: list | None = None, lens: float = 50) -> dict:
+        if location is None:
+            location = [7,-7,5]
+        if rotation_euler is None:
+            rotation_euler = [0.9,0,0.8]
         return _u(send_to_supermcp({"type":"camera_create","params":{"name":name,"location":location,"rotation_euler":rotation_euler,"lens":lens}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Set Camera Params"))
-    def camera_set_params(camera_name: str, params: dict = {}) -> dict:
+    def camera_set_params(camera_name: str, params: dict | None = None) -> dict:
         """params: lens, clip_start, clip_end, etc."""
+        if params is None:
+            params = {}
         return _u(send_to_supermcp({"type":"camera_set_params","params":{"camera_name":camera_name,"params":params}}))
 
     @mcp.tool(annotations=ToolAnnotations(title="Set Active Camera View"))

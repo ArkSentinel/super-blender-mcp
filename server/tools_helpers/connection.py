@@ -7,16 +7,22 @@ import time
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9877
-_TIMEOUT = 30.0
+_TIMEOUT = 5.0
 _RECV_BUFFER = 65536
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF = 0.2  # seconds, exponential
 
+# Cache connection params to avoid getenv per request
+_cached_params = None
 
 def get_connection_params():
+    global _cached_params
+    if _cached_params is not None:
+        return _cached_params
     host = os.environ.get("SUPER_MCP_HOST", os.environ.get("BLENDER_MCP_HOST", DEFAULT_HOST))
     port = int(os.environ.get("SUPER_MCP_PORT", str(DEFAULT_PORT)))
-    return host, port
+    _cached_params = (host, port)
+    return _cached_params
 
 
 def send_to_supermcp(command: dict, timeout=_TIMEOUT) -> dict:
@@ -36,23 +42,29 @@ def send_to_supermcp(command: dict, timeout=_TIMEOUT) -> dict:
                     if not chunk:
                         break
                     buf.extend(chunk)
-                    if b"\0" in buf:
+                    if buf.find(b"\0") != -1:
                         break
                 if not buf:
                     raise ConnectionError("Empty response from SuperMCP")
                 line, _, _ = buf.partition(b"\0")
                 response = json.loads(line.decode("utf-8"))
                 return response
-        except (ConnectionRefusedError, socket.timeout, OSError, ConnectionError, json.JSONDecodeError) as e:
+        except (ConnectionRefusedError, socket.timeout, OSError, ConnectionError) as e:
             last_err = e
             if attempt < _RETRY_ATTEMPTS:
-                time.sleep(_RETRY_BACKOFF * (2 ** (attempt - 1)))
+                # jitter to avoid thundering herd
+                import random
+                jitter = random.uniform(0, 0.05)
+                time.sleep(_RETRY_BACKOFF * (2 ** (attempt - 1)) + jitter)
                 continue
             break
+        except json.JSONDecodeError as e:
+            # Malformed response: fail fast without retry
+            raise ConnectionError(f"Invalid JSON response from SuperMCP at {host}:{port}: {e}") from e
     raise ConnectionError(
         f"Cannot connect to SuperMCP at {host}:{port} after {_RETRY_ATTEMPTS} attempts (Free is 9876, Super is 9877). "
         f"Ensure Blender is running with SuperMCP addon enabled and server started (N-panel > SuperMCP > Start). Last error: {last_err}"
-    )
+    ) from last_err
 
 
 def send_code(code: str, strict_json: bool = False) -> dict:
