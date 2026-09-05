@@ -27,6 +27,55 @@ bl_info = {
 SUPER_MCP_DEFAULT_HOST = "localhost"
 SUPER_MCP_DEFAULT_PORT = 9877
 
+# ── Addon Preferences (aparece en Edit > Preferences > Add-ons > SuperMCP) ──
+
+def _get_supermcp_prefs():
+    try:
+        # __name__ es 'addon' si se instala como addon.py, 'super_mcp' si es super_mcp.zip
+        for key in (__name__, "super_mcp", "addon"):
+            addon = bpy.context.preferences.addons.get(key)
+            if addon and hasattr(addon, "preferences"):
+                return addon.preferences
+    except:
+        pass
+    return None
+
+class SUPERMCP_AddonPreferences(bpy.types.AddonPreferences):
+    bl_idname = __name__
+
+    host = bpy.props.StringProperty(
+        name="Host",
+        description="Host del servidor SuperMCP",
+        default=SUPER_MCP_DEFAULT_HOST,
+    )
+    port = bpy.props.IntProperty(
+        name="Port",
+        description="Puerto del servidor SuperMCP (Free usa 9876)",
+        default=SUPER_MCP_DEFAULT_PORT,
+        min=1024, max=65535,
+    )
+    autostart = bpy.props.BoolProperty(
+        name="Auto-arranque",
+        description="Iniciar servidor al cargar Blender",
+        default=False,
+    )
+
+    def draw(self, context):
+        layout = self.layout
+        box = layout.box()
+        box.label(text="Servidor SuperMCP (separado del Free)", icon='PLUGIN')
+        row = box.row(align=True)
+        row.prop(self, "host")
+        row.prop(self, "port")
+        box.prop(self, "autostart")
+        box.separator()
+        box.label(text=f"Free: 9876  |  SuperMCP: {self.port} (configurable)", icon='INFO')
+        box.label(text="Reiniciar servidor tras cambiar host/port.", icon='ERROR')
+        box.separator()
+        box.label(text="107 tools: mallas, PBR, Godot, curado auto.", icon='CHECKMARK')
+        row = box.row()
+        row.operator("supermcp.start_server", text="Iniciar ahora", icon='PLAY')
+
 
 # ── Curing helpers (pure bpy/bmesh, no ops where possible) ──────────────
 
@@ -2620,8 +2669,13 @@ class SUPERMCP_OT_start_server(bpy.types.Operator):
     bl_label = "Start SuperMCP Server"
     bl_description = "Start SuperMCP server on port 9877 (Free stays on 9876)"
     def execute(self, context):
+        # Leer host/port de preferencias si existen
+        prefs = _get_supermcp_prefs()
+        if prefs:
+            _super_server.host = getattr(prefs, "host", SUPER_MCP_DEFAULT_HOST) or SUPER_MCP_DEFAULT_HOST
+            _super_server.port = int(getattr(prefs, "port", SUPER_MCP_DEFAULT_PORT) or SUPER_MCP_DEFAULT_PORT)
         _super_server.start()
-        self.report({'INFO'}, f"SuperMCP started on port {_super_server.port}")
+        self.report({'INFO'}, f"SuperMCP started on { _super_server.host}:{ _super_server.port}")
         return {'FINISHED'}
 
 class SUPERMCP_OT_stop_server(bpy.types.Operator):
@@ -2641,16 +2695,28 @@ class SUPERMCP_PT_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        prefs = _get_supermcp_prefs()
+        # Mostrar host/port actuales de preferencias si existen
+        if prefs:
+            layout.label(text=f"Prefs: {prefs.host}:{prefs.port}", icon='PREFERENCES')
+
         col = layout.column(align=True)
         if _super_server.running:
-            col.label(text=f"Running on port {_super_server.port}", icon='CHECKMARK')
+            col.label(text=f"Running on { _super_server.host}:{ _super_server.port}", icon='CHECKMARK')
             col.label(text="Free is on 9876 (separate)")
             col.operator("supermcp.stop_server", icon='CANCEL')
         else:
-            col.label(text=f"Stopped (port {_super_server.port})")
+            # Mostrar puerto configurado en prefs
+            port_label = prefs.port if prefs else _super_server.port
+            col.label(text=f"Stopped (config {port_label})")
             col.label(text="Free stays on 9876")
             col.operator("supermcp.start_server", icon='PLAY')
 
+        # Botón a preferencias
+        layout.separator()
+        row = layout.row()
+        row.label(text="Config en Preferences", icon='PREFERENCES')
+        # Blender no expone operador directo a Add-on prefs, truco via wm
         layout.separator()
         box = layout.box()
         box.label(text="Godot Pipeline (auto-cure)", icon='EXPORT')
@@ -2659,12 +2725,22 @@ class SUPERMCP_PT_panel(bpy.types.Panel):
         box.label(text=" + Recalc Normals")
         box.label(text="Export: .glb (Godot 4.x)")
 
-classes = (SUPERMCP_OT_start_server, SUPERMCP_OT_stop_server, SUPERMCP_PT_panel)
+classes = (SUPERMCP_AddonPreferences, SUPERMCP_OT_start_server, SUPERMCP_OT_stop_server, SUPERMCP_PT_panel)
 
 def register():
     for c in classes:
         bpy.utils.register_class(c)
     print("SuperMCP addon registered — start server from N-panel > SuperMCP")
+    # Autostart si está activo en preferencias
+    try:
+        prefs = _get_supermcp_prefs()
+        if prefs and getattr(prefs, "autostart", False):
+            _super_server.host = getattr(prefs, "host", SUPER_MCP_DEFAULT_HOST) or SUPER_MCP_DEFAULT_HOST
+            _super_server.port = int(getattr(prefs, "port", SUPER_MCP_DEFAULT_PORT) or SUPER_MCP_DEFAULT_PORT)
+            _super_server.start()
+            print(f"SuperMCP autostart en { _super_server.host}:{ _super_server.port}")
+    except:
+        pass
 
 def unregister():
     _super_server.stop()
