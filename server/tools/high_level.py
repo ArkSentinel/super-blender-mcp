@@ -29,3 +29,19 @@ def register(mcp: FastMCP)->None:
     def export_godot_glb(filepath: str = "/tmp/export_godot.glb", use_selection: bool = False, auto_cure: bool = True, compression: bool = False) -> dict:
         """Alias PBR-compat de godot_export_glb con compresión opcional para Godot/Redot."""
         return _u(send_to_supermcp({"type":"export_godot_glb","params":{"filepath":filepath,"use_selection":use_selection,"auto_cure":auto_cure,"compression":compression}}))
+
+    @mcp.tool(annotations=ToolAnnotations(title="Create Pitched Roof (Snapped Asset)"))
+    def asset_create_pitched_roof(name: str = "Roof", length: float = 5.0, width: float = 4.0, peak_height: float = 1.5, overhang: float = 0.4, thickness: float = 0.15, base_height: float = 2.5, material_name: str = "") -> dict:
+        """Crea un techo a dos aguas perfectamente alineado y snappeado sin errores de rotación euleriana."""
+        return _u(send_to_supermcp({"type":"asset_create_pitched_roof","params":{
+            "name": name, "length": length, "width": width, "peak_height": peak_height,
+            "overhang": overhang, "thickness": thickness, "base_height": base_height, "material_name": material_name
+        }}))
+
+    @mcp.tool(annotations=ToolAnnotations(title="Create Wall (Snapped Asset)"))
+    def asset_create_wall(name: str = "Wall", start: list = [0,0,0], end: list = [5,0,0], height: float = 2.5, thickness: float = 0.2, material_name: str = "") -> dict:
+        """Crea una pared recta perfectamente alineada desde start hasta end."""
+        return _u(send_to_supermcp({"type":"asset_create_wall","params":{
+            "name": name, "start": start, "end": end, "height": height, "thickness": thickness, "material_name": material_name
+        }}))
+

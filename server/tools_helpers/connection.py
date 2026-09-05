@@ -63,7 +63,8 @@ def send_to_supermcp(command: dict, timeout=_TIMEOUT) -> dict:
             raise ConnectionError(f"Invalid JSON response from SuperMCP at {host}:{port}: {e}") from e
     raise ConnectionError(
         f"Cannot connect to SuperMCP at {host}:{port} after {_RETRY_ATTEMPTS} attempts (Free is 9876, Super is 9877). "
-        f"Ensure Blender is running with SuperMCP addon enabled and server started (N-panel > SuperMCP > Start). Last error: {last_err}"
+        f"Ensure Blender is running, the SuperMCP addon is enabled, and the server thread is running "
+        f"(N-panel > SuperMCP > Start or enable Auto-start in Preferences). Last error: {last_err}"
     ) from last_err
 
 

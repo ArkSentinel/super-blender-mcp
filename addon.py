@@ -57,7 +57,7 @@ class SUPERMCP_AddonPreferences(bpy.types.AddonPreferences):
     autostart = bpy.props.BoolProperty(
         name="Auto-arranque",
         description="Iniciar servidor al cargar Blender",
-        default=False,
+        default=True,
     )
 
     def draw(self, context):
@@ -215,21 +215,52 @@ def _recalc_normals_for_object(obj, inside=False, fix_inverted=True):
 
 
 def _cure_single_object(obj, merge_distance=0.0001, recalc_outside=True, apply_location=True, apply_rotation=True, apply_scale=True):
-    """Full cure for one object: apply transforms → merge → recalc normals. Returns combined report."""
+    """Full cure for one object: apply transforms → merge → recalc normals → triangulate ngons. Returns combined report."""
     if obj.type not in ('MESH', 'CURVE', 'SURFACE', 'FONT', 'META', 'ARMATURE', 'EMPTY', 'LIGHT', 'CAMERA'):
         return {"name": obj.name, "type": obj.type, "skipped": True}
+
+    warnings = []
+
+    # Guard 1: zero scale check
+    if any(abs(s) < 1e-6 for s in obj.scale):
+        return {
+            "name": obj.name,
+            "type": obj.type,
+            "error": "zero scale cannot be baked",
+            "skipped": True,
+        }
+
+    # Guard 2: merge distance warning
+    if merge_distance > 0.01:
+        warnings.append("high merge distance may collapse small geometry")
 
     # For non-mesh, only apply transforms
     if obj.type != 'MESH':
         t = _apply_transforms_for_object(obj, apply_location, apply_rotation, apply_scale)
-        return {"name": obj.name, "type": obj.type, "transform": t, "note": "non-mesh: only transforms"}
+        return {"name": obj.name, "type": obj.type, "transform": t, "warnings": warnings, "note": "non-mesh: only transforms"}
 
     t = _apply_transforms_for_object(obj, apply_location, apply_rotation, apply_scale)
     m = _merge_by_distance_for_object(obj, distance=merge_distance)
     n = _recalc_normals_for_object(obj, inside=not recalc_outside, fix_inverted=True)
 
-    # Weighted normal mod check: if bevel-like sharp edges, suggest weighted normal
-    # We don't auto-add but report
+    # Triangulate ngons during cure
+    mesh = obj.data
+    triangulated_ngons = 0
+    if mesh:
+        bm = bmesh.new()
+        bm.from_mesh(mesh)
+        ngons = [f for f in bm.faces if len(f.verts) > 4]
+        if ngons:
+            triangulated_ngons = len(ngons)
+            bmesh.ops.triangulate(bm, faces=ngons, quad_method='BEAUTY', ngon_method='BEAUTY')
+            bm.to_mesh(mesh)
+            mesh.update()
+        bm.free()
+
+    # Guard 3: check if mesh collapsed
+    if mesh and len(mesh.polygons) == 0:
+        warnings.append("mesh collapsed")
+
     has_sharp = any(not p.use_smooth for p in obj.data.polygons) if obj.data else False
 
     return {
@@ -238,7 +269,9 @@ def _cure_single_object(obj, merge_distance=0.0001, recalc_outside=True, apply_l
         "transform": t,
         "merge": m,
         "normals": n,
+        "triangulated_ngons": triangulated_ngons,
         "has_sharp_edges": has_sharp,
+        "warnings": warnings,
     }
 
 
@@ -386,14 +419,22 @@ class SuperMCPServer:
             except:
                 pass
 
-    def _structured_error(self, e):
+    def _structured_error(self, e, handler=None):
         tb = traceback.format_exc()
-        # Extract line number of user code if present
         line_no = None
         try:
             tb_list = traceback.extract_tb(e.__traceback__)
             if tb_list:
                 line_no = tb_list[-1].lineno
+                if handler:
+                    try:
+                        import inspect
+                        _, start_line = inspect.getsourcelines(handler)
+                        rel_line = line_no - start_line + 1
+                        if rel_line > 0:
+                            line_no = rel_line
+                    except Exception:
+                        pass
         except:
             pass
         return {
@@ -484,6 +525,8 @@ class SuperMCPServer:
             "shader_duplicate_tree": self.shader_duplicate_tree,
             "shader_arrange_nodes": self.shader_arrange_nodes,
             "shader_export_as_code": self.shader_export_as_code,
+            "asset_create_pitched_roof": self.asset_create_pitched_roof,
+            "asset_create_wall": self.asset_create_wall,
             "uv_unwrap": self.uv_unwrap,
             "uv_add_layer": self.uv_add_layer,
             "uv_pack_islands": self.uv_pack_islands,
@@ -575,7 +618,7 @@ class SuperMCPServer:
                     result = handler(**params) if isinstance(params, dict) else handler()
             except Exception as e:
                 traceback.print_exc()
-                err = self._structured_error(e)
+                err = self._structured_error(e, handler=handler)
                 err["handler"] = cmd_type
                 return err
             print(f"SuperMCP: {cmd_type} done")
@@ -787,36 +830,61 @@ class SuperMCPServer:
 
         for obj in meshes:
             mesh = obj.data
-            # Scale check
-            if any(abs(s - 1.0) > 1e-4 for s in obj.scale):
+
+            # Zero scale / scale check
+            if any(abs(s) < 1e-6 for s in obj.scale):
+                errors.append(f"{obj.name}: zero scale {tuple(round(float(s),4) for s in obj.scale)} — cannot be transformed")
+            elif any(abs(s - 1.0) > 1e-4 for s in obj.scale):
                 warnings.append(f"{obj.name}: scale {tuple(round(float(s),4) for s in obj.scale)} != (1,1,1) — needs Apply Transforms (auto-fixed on export)")
+
             if any(abs(v) > 1e-3 for v in obj.location) and obj.location.length > 0.001:
-                # Only warn if not at origin? Not error, but hint
                 infos.append(f"{obj.name}: location {tuple(round(float(v),3) for v in obj.location)} will be baked on apply")
+
+            # Polygons check
+            if len(mesh.polygons) == 0:
+                errors.append(f"{obj.name}: 0 polygons in mesh")
+
+            # Inverted normals & degenerate faces check
+            inverted_count = 0
+            degenerate = 0
+            for p in mesh.polygons:
+                if p.area < 1e-6:
+                    degenerate += 1
+                if len(p.vertices) >= 3:
+                    v0 = mesh.vertices[p.vertices[0]].co
+                    v1 = mesh.vertices[p.vertices[1]].co
+                    v2 = mesh.vertices[p.vertices[2]].co
+                    calc_n = (v1 - v0).cross(v2 - v0)
+                    if calc_n.length > 1e-6:
+                        calc_n.normalize()
+                        if p.normal.dot(calc_n) < -1e-4:
+                            inverted_count += 1
+
+            if inverted_count > 0:
+                warnings.append(f"{obj.name}: {inverted_count} faces with inverted normals (dot < 0)")
+            if degenerate > 0:
+                warnings.append(f"{obj.name}: {degenerate} degenerate faces (area < 1e-6)")
+
             # Ngons
             ngons = sum(1 for p in mesh.polygons if len(p.vertices) > 4)
             if ngons:
                 warnings.append(f"{obj.name}: {ngons} ngons — Godot triangulates unpredictably, cure will handle")
-            # UV
+
+            # UV check
             if len(mesh.uv_layers) == 0:
-                # Only warn if has material with texture
-                has_tex = any(s.material and s.material.use_nodes for s in obj.material_slots)
-                if has_tex:
-                    warnings.append(f"{obj.name}: no UV layers but has material — needs unwrap")
-            # Missing images
+                errors.append(f"{obj.name}: 0 UV layers — required for Godot export")
+
+            # Missing images check
             for slot in obj.material_slots:
                 if slot.material and slot.material.use_nodes:
                     for node in slot.material.node_tree.nodes:
-                        if node.type == 'TEX_IMAGE' and node.image:
-                            img = node.image
-                            if img.source == 'FILE' and img.filepath:
-                                abs_path = bpy.path.abspath(img.filepath)
-                                if abs_path and not os.path.exists(abs_path) and not img.packed_file:
-                                    errors.append(f"{obj.name}/{slot.material.name}: missing image {img.name} → {abs_path}")
-            # Degenerate
-            degenerate = sum(1 for p in mesh.polygons if p.area < 1e-8)
-            if degenerate:
-                warnings.append(f"{obj.name}: {degenerate} degenerate faces (area ~0)")
+                        if node.type == 'TEX_IMAGE':
+                            if not node.image:
+                                errors.append(f"{obj.name}/{slot.material.name}: Image Texture node '{node.name}' has no image assigned")
+                            elif node.image.source == 'FILE' and node.image.filepath:
+                                abs_path = bpy.path.abspath(node.image.filepath)
+                                if abs_path and not os.path.exists(abs_path) and not node.image.packed_file:
+                                    errors.append(f"{obj.name}/{slot.material.name}: missing image {node.image.name} → {abs_path}")
 
         # Global: units
         unit_scale = bpy.context.scene.unit_settings.scale_length
@@ -865,29 +933,33 @@ class SuperMCPServer:
         try:
             # Ensure directory exists
             os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
-            # Blender glTF exporter
-            result = bpy.ops.export_scene.gltf(
-                filepath=filepath,
-                export_format=export_format,
-                export_yup=export_yup,
-                export_apply=export_apply,
-                export_texcoords=True,
-                export_normals=True,
-                export_tangents=True,
-                export_materials='EXPORT',
-                export_images=True,
-                export_cameras=False,
-                export_lights=False,
-                use_selection=use_selection,
-                use_visible=use_visible,
-                export_animations=export_animations,
-                export_frame_step=1,
-                export_force_sampling=True,
-                export_nla_strips=True,
-                export_def_bones=False,
-                export_skins=True,
-                export_morph=True,
-            )
+            # Blender glTF exporter — filter kwargs dynamically against RNA properties
+            gltf_props = {p.identifier for p in bpy.ops.export_scene.gltf.get_rna_type().properties}
+            raw_kwargs = {
+                "filepath": filepath,
+                "export_format": export_format,
+                "export_yup": export_yup,
+                "export_apply": export_apply,
+                "export_texcoords": True,
+                "export_normals": True,
+                "export_tangents": True,
+                "export_materials": 'EXPORT',
+                "export_image_format": 'AUTO',
+                "export_cameras": False,
+                "export_lights": False,
+                "use_selection": use_selection,
+                "use_visible": use_visible,
+                "export_animations": export_animations,
+                "export_frame_step": 1,
+                "export_force_sampling": True,
+                "export_nla_strips": True,
+                "export_def_bones": False,
+                "export_skins": True,
+                "export_morph": True,
+                "export_morph_tangent": True,
+            }
+            gltf_kwargs = {k: v for k, v in raw_kwargs.items() if k in gltf_props}
+            result = bpy.ops.export_scene.gltf(**gltf_kwargs)
             # bpy.ops returns {'FINISHED'} on success
             success = result == {'FINISHED'} or 'FINISHED' in str(result)
         except Exception as e:
@@ -1144,7 +1216,7 @@ class SuperMCPServer:
         if not obj or obj.type != 'MESH':
             raise ValueError(f"Mesh object not found: {object_name}")
         mesh = obj.data
-        ngons = tris = quads = degenerate = 0
+        ngons = tris = quads = degenerate = inverted = 0
         for p in mesh.polygons:
             n = len(p.vertices)
             if n > 4:
@@ -1153,10 +1225,30 @@ class SuperMCPServer:
                 tris += 1
             elif n == 4:
                 quads += 1
-            if p.area < 1e-8:
+            if p.area < 1e-6:
                 degenerate += 1
+            if n >= 3:
+                v0 = mesh.vertices[p.vertices[0]].co
+                v1 = mesh.vertices[p.vertices[1]].co
+                v2 = mesh.vertices[p.vertices[2]].co
+                calc_n = (v1 - v0).cross(v2 - v0)
+                if calc_n.length > 1e-6:
+                    calc_n.normalize()
+                    if p.normal.dot(calc_n) < -1e-4:
+                        inverted += 1
         has_uv = len(mesh.uv_layers) > 0
+        zero_scale = any(abs(s) < 1e-6 for s in obj.scale)
         non_uniform_scale = any(abs(s - 1.0) > 1e-4 for s in obj.scale)
+        empty_mesh = len(mesh.polygons) == 0
+        needs_cure = (
+            non_uniform_scale or
+            zero_scale or
+            ngons > 0 or
+            degenerate > 0 or
+            inverted > 0 or
+            not has_uv or
+            empty_mesh
+        )
         return {
             "object": obj.name,
             "vertices": len(mesh.vertices),
@@ -1165,11 +1257,14 @@ class SuperMCPServer:
             "tris": tris,
             "quads": quads,
             "degenerate_faces": degenerate,
+            "inverted_normals": inverted,
             "has_uv": has_uv,
             "uv_layers": len(mesh.uv_layers),
             "non_uniform_scale": non_uniform_scale,
+            "zero_scale": zero_scale,
+            "empty_mesh": empty_mesh,
             "scale": [float(s) for s in obj.scale],
-            "needs_cure": non_uniform_scale or ngons > 0 or degenerate > 0,
+            "needs_cure": needs_cure,
         }
 
     # Geometry Nodes
@@ -1417,27 +1512,50 @@ class SuperMCPServer:
         obj = bpy.data.objects.get(object_name)
         if not obj or obj.type != 'MESH':
             raise ValueError(f"Mesh not found: {object_name}")
-        # Select and set active
         for o in bpy.context.view_layer.objects:
             o.select_set(o == obj)
         bpy.context.view_layer.objects.active = obj
-        prev_mode = obj.mode
-        if prev_mode != 'EDIT':
-            bpy.ops.object.mode_set(mode='EDIT')
+        obj.select_set(True)
+        prev_mode = getattr(obj, "mode", "OBJECT")
+        used_fallback = False
         try:
+            if prev_mode != 'EDIT':
+                bpy.ops.object.mode_set(mode='EDIT')
             bpy.ops.mesh.select_all(action='SELECT')
             if method == "SMART_PROJECT":
-                bpy.ops.uv.smart_project(angle_limit=66, island_margin=margin, use_aspect=True, stretch_to_bounds=True)
+                props = {p.identifier for p in bpy.ops.uv.smart_project.get_rna_type().properties}
+                kwargs = {"island_margin": margin, "angle_limit": 66}
+                if "correct_aspect" in props:
+                    kwargs["correct_aspect"] = True
+                if "scale_to_bounds" in props:
+                    kwargs["scale_to_bounds"] = True
+                bpy.ops.uv.smart_project(**kwargs)
             elif method == "CUBE_PROJECT":
                 bpy.ops.uv.cube_project(cube_size=2.0)
             elif method == "UNWRAP":
                 bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=margin)
             else:
                 raise ValueError(f"Unknown unwrap method: {method}")
+        except Exception as e:
+            used_fallback = True
+            mesh = obj.data
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+            uv_layer = bm.loops.layers.uv.verify()
+            for face in bm.faces:
+                for loop in face.loops:
+                    co = loop.vert.co
+                    loop[uv_layer].uv = (co.x, co.y)
+            bm.to_mesh(mesh)
+            bm.free()
+            mesh.update()
         finally:
-            bpy.ops.object.mode_set(mode='OBJECT')
+            try:
+                bpy.ops.object.mode_set(mode=prev_mode if prev_mode != 'EDIT' else 'OBJECT')
+            except Exception:
+                pass
         mesh = obj.data
-        return {"object": obj.name, "method": method, "uv_layers": len(mesh.uv_layers), "margin": margin}
+        return {"object": obj.name, "method": method, "uv_layers": len(mesh.uv_layers), "margin": margin, "fallback_used": used_fallback}
 
     def uv_add_layer(self, object_name="", layer_name="UVMap"):
         obj = bpy.data.objects.get(object_name)
@@ -1454,13 +1572,42 @@ class SuperMCPServer:
         for o in bpy.context.view_layer.objects:
             o.select_set(o == obj)
         bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.mode_set(mode='EDIT')
+        obj.select_set(True)
+        prev_mode = getattr(obj, "mode", "OBJECT")
+        used_fallback = False
         try:
+            if prev_mode != 'EDIT':
+                bpy.ops.object.mode_set(mode='EDIT')
             bpy.ops.mesh.select_all(action='SELECT')
             bpy.ops.uv.pack_islands(margin=margin)
+        except Exception as e:
+            used_fallback = True
+            mesh = obj.data
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+            uv_layer = bm.loops.layers.uv.get()
+            if uv_layer and bm.faces:
+                u_coords = [loop[uv_layer].uv.x for f in bm.faces for loop in f.loops]
+                v_coords = [loop[uv_layer].uv.y for f in bm.faces for loop in f.loops]
+                if u_coords and v_coords:
+                    min_u, max_u = min(u_coords), max(u_coords)
+                    min_v, max_v = min(v_coords), max(v_coords)
+                    range_u = (max_u - min_u) or 1.0
+                    range_v = (max_v - min_v) or 1.0
+                    for f in bm.faces:
+                        for loop in f.loops:
+                            u = (loop[uv_layer].uv.x - min_u) / range_u
+                            v = (loop[uv_layer].uv.y - min_v) / range_v
+                            loop[uv_layer].uv = (u, v)
+                    bm.to_mesh(mesh)
+                    mesh.update()
+            bm.free()
         finally:
-            bpy.ops.object.mode_set(mode='OBJECT')
-        return {"object": obj.name, "packed": True, "margin": margin}
+            try:
+                bpy.ops.object.mode_set(mode=prev_mode if prev_mode != 'EDIT' else 'OBJECT')
+            except Exception:
+                pass
+        return {"object": obj.name, "packed": True, "margin": margin, "fallback_used": used_fallback}
 
     def uv_get_info(self, object_name=""):
         obj = bpy.data.objects.get(object_name)
@@ -2478,6 +2625,15 @@ class SuperMCPServer:
                     issues.append(f"{obj.name}/{mat.name}: no Principled BSDF — won't export PBR")
                 if not output:
                     issues.append(f"{obj.name}/{mat.name}: no Material Output")
+                # Check Image Texture nodes for missing/unassigned images
+                for node in nt.nodes:
+                    if node.type == 'TEX_IMAGE':
+                        if not node.image:
+                            issues.append(f"{obj.name}/{mat.name}: Image Texture node '{node.name}' has no image assigned")
+                        elif node.image.source == 'FILE' and node.image.filepath:
+                            abs_path = bpy.path.abspath(node.image.filepath)
+                            if abs_path and not os.path.exists(abs_path) and not node.image.packed_file:
+                                issues.append(f"{obj.name}/{mat.name}: missing image file {abs_path}")
                 # Check procedural nodes that won't bake
                 proc = [n for n in nt.nodes if n.type in ('TEX_NOISE','TEX_VORONOI','TEX_MUSGRAVE')]
                 if proc:
@@ -2660,6 +2816,129 @@ class SuperMCPServer:
             result["compression_requested"] = True
         return result
 
+    def asset_create_pitched_roof(self, name="Roof", length=5.0, width=4.0, peak_height=1.5, overhang=0.4, thickness=0.15, base_height=2.5, material_name=""):
+        """Crea un techo a dos aguas perfectamente alineado y snappeado sin rotaciones eulerianas propensas a errores."""
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+
+        mat = bpy.data.materials.get(material_name) if material_name else None
+
+        bm = bmesh.new()
+        half_w = (width / 2.0) + overhang
+        half_l = (length / 2.0) + overhang
+        z_base = base_height
+        z_peak = base_height + peak_height
+
+        p1 = (-half_w, -half_l, z_base)
+        p2 = ( 0.05,   -half_l, z_peak)
+        p3 = ( 0.05,    half_l, z_peak)
+        p4 = (-half_w,  half_l, z_base)
+
+        v1 = bm.verts.new(p1)
+        v2 = bm.verts.new(p2)
+        v3 = bm.verts.new(p3)
+        v4 = bm.verts.new(p4)
+        f_left = bm.faces.new((v1, v2, v3, v4))
+
+        p5 = (-0.05,  -half_l, z_peak)
+        p6 = ( half_w, -half_l, z_base)
+        p7 = ( half_w,  half_l, z_base)
+        p8 = (-0.05,   half_l, z_peak)
+
+        v5 = bm.verts.new(p5)
+        v6 = bm.verts.new(p6)
+        v7 = bm.verts.new(p7)
+        v8 = bm.verts.new(p8)
+        f_right = bm.faces.new((v5, v6, v7, v8))
+
+        bm.normal_update()
+        res = bmesh.ops.extrude_face_region(bm, geom=[f_left, f_right])
+        extruded_verts = [v for v in res['geom'] if isinstance(v, bmesh.types.BMVert)]
+        bmesh.ops.translate(bm, vec=mathutils.Vector((0, 0, -thickness)), verts=extruded_verts)
+
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+
+        if mat:
+            obj.data.materials.append(mat)
+
+        try:
+            self.uv_unwrap(obj.name)
+        except:
+            pass
+
+        return {
+            "name": obj.name,
+            "type": "pitched_roof",
+            "length": length,
+            "width": width,
+            "peak_height": peak_height,
+            "overhang": overhang,
+            "thickness": thickness,
+            "base_height": base_height,
+            "success": True,
+        }
+
+    def asset_create_wall(self, name="Wall", start=(0,0,0), end=(5,0,0), height=2.5, thickness=0.2, material_name=""):
+        """Crea una pared recta perfectamente alineada desde start hasta end."""
+        mesh = bpy.data.meshes.new(name)
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+
+        mat = bpy.data.materials.get(material_name) if material_name else None
+
+        v_start = mathutils.Vector(start)
+        v_end = mathutils.Vector(end)
+        dir_vec = (v_end - v_start).normalized() if (v_end - v_start).length > 1e-6 else mathutils.Vector((1, 0, 0))
+        perp_vec = mathutils.Vector((-dir_vec.y, dir_vec.x, 0)) * (thickness / 2.0)
+
+        p0 = v_start - perp_vec
+        p1 = v_end - perp_vec
+        p2 = v_end + perp_vec
+        p3 = v_start + perp_vec
+
+        bm = bmesh.new()
+        v0_b = bm.verts.new((p0.x, p0.y, p0.z))
+        v1_b = bm.verts.new((p1.x, p1.y, p1.z))
+        v2_b = bm.verts.new((p2.x, p2.y, p2.z))
+        v3_b = bm.verts.new((p3.x, p3.y, p3.z))
+
+        v0_t = bm.verts.new((p0.x, p0.y, p0.z + height))
+        v1_t = bm.verts.new((p1.x, p1.y, p1.z + height))
+        v2_t = bm.verts.new((p2.x, p2.y, p2.z + height))
+        v3_t = bm.verts.new((p3.x, p3.y, p3.z + height))
+
+        bm.faces.new((v0_b, v1_b, v2_b, v3_b))
+        bm.faces.new((v0_t, v3_t, v2_t, v1_t))
+        bm.faces.new((v0_b, v0_t, v1_t, v1_b))
+        bm.faces.new((v1_b, v1_t, v2_t, v2_b))
+        bm.faces.new((v2_b, v2_t, v3_t, v3_b))
+        bm.faces.new((v3_b, v3_t, v0_t, v0_b))
+
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bm.to_mesh(mesh)
+        bm.free()
+
+        if mat:
+            obj.data.materials.append(mat)
+
+        try:
+            self.uv_unwrap(obj.name)
+        except:
+            pass
+
+        return {
+            "name": obj.name,
+            "type": "wall",
+            "start": list(start),
+            "end": list(end),
+            "height": height,
+            "thickness": thickness,
+            "success": True,
+        }
+
 # ── Blender Addon registration ──────────────────────────────────────────
 
 _super_server = SuperMCPServer()
@@ -2727,22 +3006,29 @@ class SUPERMCP_PT_panel(bpy.types.Panel):
 
 classes = (SUPERMCP_AddonPreferences, SUPERMCP_OT_start_server, SUPERMCP_OT_stop_server, SUPERMCP_PT_panel)
 
+def _delayed_start_server(scene=None):
+    try:
+        if not _super_server.running:
+            prefs = _get_supermcp_prefs()
+            if not prefs or getattr(prefs, "autostart", True):
+                _super_server.host = getattr(prefs, "host", SUPER_MCP_DEFAULT_HOST) if prefs else SUPER_MCP_DEFAULT_HOST
+                _super_server.port = int(getattr(prefs, "port", SUPER_MCP_DEFAULT_PORT)) if prefs else SUPER_MCP_DEFAULT_PORT
+                _super_server.start()
+                print(f"SuperMCP autostarted on { _super_server.host}:{ _super_server.port}")
+    except Exception as e:
+        print(f"SuperMCP autostart error: {e}")
+
 def register():
     for c in classes:
         bpy.utils.register_class(c)
     print("SuperMCP addon registered — start server from N-panel > SuperMCP")
-    # Autostart si está activo en preferencias
-    try:
-        prefs = _get_supermcp_prefs()
-        if prefs and getattr(prefs, "autostart", False):
-            _super_server.host = getattr(prefs, "host", SUPER_MCP_DEFAULT_HOST) or SUPER_MCP_DEFAULT_HOST
-            _super_server.port = int(getattr(prefs, "port", SUPER_MCP_DEFAULT_PORT) or SUPER_MCP_DEFAULT_PORT)
-            _super_server.start()
-            print(f"SuperMCP autostart en { _super_server.host}:{ _super_server.port}")
-    except:
-        pass
+    if _delayed_start_server not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_delayed_start_server)
+    _delayed_start_server()
 
 def unregister():
+    if _delayed_start_server in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_delayed_start_server)
     _super_server.stop()
     for c in reversed(classes):
         try:
